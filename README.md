@@ -8,7 +8,7 @@ One click — these links always point to the newest release:
 
 | Platform | Download | Requirements |
 |---|---|---|
-| 🪟 **Windows app** | **[Download USBCam.exe](https://github.com/studiospike/USBCam/releases/download/v1.0.0/USBCam.exe)** | Windows 10 or 11 (64-bit) — run it, no install |
+| 🪟 **Windows app** | **[Download USBCam.exe](https://github.com/studiospike/USBCam/releases/latest/download/USBCam.exe)** | Windows 10 or 11 (64-bit) — run it, no install (adb is bundled) |
 | 📱 **Android app** | **[Download usbcam.apk](https://github.com/studiospike/USBCam/releases/latest/download/usbcam.apk)** | Android 8+ — install directly (allow "unknown apps") |
 
 All releases: [Releases page](https://github.com/studiospike/USBCam/releases)
@@ -28,13 +28,20 @@ Two tiny apps that turn your Android phone into a webcam source for your PC:
 - USB only (`adb reverse`) — no Wi-Fi, no audio, no virtual driver needed.
 - **Optional virtual camera:** send the image straight into Meet / Zoom / Discord as a webcam (right-click → vcam; requires the OBS Virtual Camera driver).
 - **Update check:** the Android app tells you when a new version is out (with a Download button), if the phone has internet.
+- **Self-diagnosing black window:** while there is no video, the window shows the exact reason (adb missing, no phone, unauthorized, open the app) instead of a silent black box.
+- **Log file:** `%LOCALAPPDATA%\USBCam\usbcam.log`, also reachable from the right-click menu.
 
 ## Quick start
 
 1. Connect the phone by USB (file transfer mode is fine; USB debugging must be enabled).
-2. Run `USBCam.exe` — it finds adb itself and keeps `adb reverse` alive.
+2. Run `USBCam.exe` — adb is included, and it keeps `adb reverse` alive by itself.
 3. Open **USBCam** on the phone — streaming starts automatically.
 4. In OBS: Sources → Window Capture → pick the `USBCam` window.
+
+> The window is black only while there is no video. While waiting it shows a
+> readable status instead of a silent black box: *"adb not found"*, *"no phone
+> detected"*, *"USB debugging not authorized"*, or *"phone connected — open the
+> USBCam app"*. Read that message first when something does not work.
 
 > OBS tip: the window is frameless, so choose the "Window" mode and enable **Client area** to capture exactly the video.
 
@@ -48,6 +55,7 @@ Two tiny apps that turn your Android phone into a webcam source for your PC:
 | Fullscreen | Menu or `F11`, exit with `Esc` |
 | Mirror (selfie) | Menu → Mirror |
 | Virtual camera | Menu → vcam |
+| Open log file | Menu → Open log file |
 | Close | Menu → Close |
 
 The window title (taskbar / Alt-Tab) shows the status:
@@ -87,12 +95,18 @@ adb install -r android\app\build\usbcam.apk
 ```bat
 python -m venv .venv
 .venv\Scripts\pip install PySide6 pyvirtualcam numpy pyinstaller
-.venv\Scripts\pyinstaller --noconfirm --onefile --windowed --name USBCam --distpath pc/dist --workpath build --hidden-import pyvirtualcam --hidden-import numpy pc/receiver.py
+.venv\Scripts\pyinstaller --noconfirm --clean USBCam.spec
 ```
+
+`USBCam.spec` bundles `adb.exe` (plus `AdbWinApi.dll` / `AdbWinUsbApi.dll`)
+from `%LOCALAPPDATA%\Android\Sdk\platform-tools` when it finds them, so the
+built exe works on PCs without Android SDK. If no SDK is present at build
+time, the app downloads platform-tools on first run instead.
 
 ## Architecture (short version)
 
-- **Transport:** TCP over USB with `adb reverse tcp:8420 tcp:8420`. The phone is the TCP client; the PC listens on `127.0.0.1:8420`. The Windows app re-establishes `adb reverse` every 5 seconds, so the link self-heals after cable reconnects or adb restarts.
+- **Transport:** TCP over USB with `adb reverse tcp:8420 tcp:8420`. The phone is the TCP client; the PC listens on `127.0.0.1:8420`. The Windows app re-establishes `adb reverse` every 5 seconds, so the link self-heals after cable reconnects or adb restarts. adb is bundled in the exe (with a platform-tools download fallback), so no SDK is needed.
+- **Device detection:** `adb devices` output is parsed per line (`device` / `unauthorized` / `offline`), so the UI reports the real phone state.
 - **Protocol:** every frame = 4-byte little-endian header (payload length) + payload; payload = 1 byte camera id (0=back, 1=front) + JPEG bytes.
 - **Low latency:** the phone only ever sends the newest frame (stale frames are dropped, `TCP_NODELAY`); the PC re-syncs to the stream head on every reconnect, so latency never accumulates.
 - **Android:** camera2 delivers JPEG directly (no re-encode), ImageReader with `acquireLatestImage`.
@@ -109,10 +123,32 @@ python -m venv .venv
 
 ## Troubleshooting
 
-- **Window says "no phone"**: check the cable; `adb devices` must list the phone; accept the USB debugging prompt.
-- **Connected but no image**: open the app on the phone (streaming starts when the app opens) or use the `am start` command above.
-- **MIUI**: set USBCam to "No restrictions" in Battery settings so long streams are not killed.
-- **Latency grew**: close and reopen the window (it re-syncs to the stream head) — in practice this should not happen.
+The window now tells you what is wrong while it is black:
+
+| Message | Fix |
+|---|---|
+| **No phone detected** | Connect the USB cable, enable *Developer options → USB debugging*, and accept the *"Allow USB debugging"* prompt on the phone. |
+| **Phone found, but USB debugging is not authorized** | Unlock the phone and tap **Allow** on the prompt (tick "Always allow"). Reconnect the cable if the prompt does not appear. |
+| **Phone is offline in adb** | Reconnect the cable, or run `adb kill-server`. On Windows 11 use a USB data cable and a rear/USB-2 port if needed. |
+| **Phone connected — waiting for video** | Open the **USBCam** app on the phone; streaming starts automatically. |
+| **Cannot listen on port 8420** | Another program is using that port. Close it and restart USBCam. |
+| **adb not found** | Normally impossible in the release exe (adb is bundled). If you built from source, install Android platform-tools — the app also tries to download them automatically. |
+
+- **Windows 11 / fresh PC**: no driver or SDK install is needed for the release exe. If the phone still does not appear in `adb devices`, install the OEM USB driver (Samsung, Xiaomi, …) or the [Google USB Driver](https://developer.android.com/studio/run/win-usb).
+- **SmartScreen / antivirus**: the exe is not code-signed yet. If Windows blocks it, choose *More info → Run anyway*.
+- **MIUI / HyperOS**: set USBCam to "No restrictions" in Battery settings so long streams are not killed.
+- **Latency grew**: close and reopen the window (it re-syncs to the stream head).
+
+### Log file
+
+Everything the Windows app does is written to:
+
+```
+%LOCALAPPDATA%\USBCam\usbcam.log
+```
+
+Right-click the window → **Open log file**. Attach that file when reporting a
+problem — it records which adb was used and the exact phone state.
 
 ## Author
 
