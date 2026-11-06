@@ -1,6 +1,6 @@
 @echo off
 rem Builds android\app\build\usbcam.apk using only the installed SDK (no Gradle).
-setlocal
+setlocal EnableDelayedExpansion
 cd /d "%~dp0.."
 
 set "SDK=%LOCALAPPDATA%\Android\Sdk"
@@ -23,12 +23,20 @@ set "JAR=%JAVAHOME%\bin\jar.exe"
 echo [1/5] aapt2 compile+link...
 if not exist "%OUT%" mkdir "%OUT%"
 "%BT%\aapt2.exe" compile --dir "%CD%\android\app\src\main\res" -o "%OUT%\res.zip" || exit /b 1
-"%BT%\aapt2.exe" link -o "%OUT%\usbcam.apk" -I "%PLATFORM%\android.jar" --manifest "%CD%\android\app\src\main\AndroidManifest.xml" --min-sdk-version 26 --target-sdk-version 34 --version-code 1 --version-name 1.0 "%OUT%\res.zip" || exit /b 1
+"%BT%\aapt2.exe" link -o "%OUT%\usbcam.apk" -I "%PLATFORM%\android.jar" --manifest "%CD%\android\app\src\main\AndroidManifest.xml" --min-sdk-version 26 --target-sdk-version 34 "%OUT%\res.zip" || exit /b 1
 
 echo [2/5] javac...
 if exist "%OUT%\classes" rmdir /s /q "%OUT%\classes"
 mkdir "%OUT%\classes"
-dir /s /b "%SRC%\*.java" > "%OUT%\sources.txt"
+rem Quote every path and use forward slashes: the project folder may contain
+rem spaces, and javac treats backslashes in @argfiles as escapes.
+> "%OUT%\sources.txt" (
+  for /f "delims=" %%f in ('dir /s /b "%SRC%\*.java"') do (
+    set "P=%%f"
+    set "P=!P:\=/!"
+    echo "!P!"
+  )
+)
 "%JAVAC%" -source 17 -target 17 -classpath "%PLATFORM%\android.jar" -d "%OUT%\classes" @"%OUT%\sources.txt" || exit /b 1
 
 echo [3/5] d8...
